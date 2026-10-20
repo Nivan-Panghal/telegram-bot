@@ -2,7 +2,7 @@
 
 Delivers Kurso course content to students over Telegram: lessons, quizzes, assignment prompts, and reminders, so students can learn from a chat instead of logging into the website.
 
-Part of the [Kurso](https://github.com/Nancy-Panghal/course-web) platform — see that repo for the full product overview.
+Part of the [Kurso](https://github.com/Nivan-Panghal/course-web) platform — see that repo for the full product overview.
 
 ## What this service does
 
@@ -15,4 +15,4 @@ Part of the [Kurso](https://github.com/Nancy-Panghal/course-web) platform — se
 
 Node.js, Express (webhook server), Supabase client, Telegram Bot API.
 
-Requires a `.env` file with your own values for `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ACADEMYKIT_URL`, and `LESSON_LINK_SECRET` — this bot doesn't run standalone; it needs a live Kurso backend to fetch course data from.
+Requires a `.env` file with your own values for `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `KURSO_URL`, and `LESSON_LINK_SECRET` — this bot doesn't run standalone; it needs a live Kurso backend to fetch course data from.
