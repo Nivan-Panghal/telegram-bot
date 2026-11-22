@@ -604,7 +604,7 @@ async function markDone(chatId, lessonNumber) {
     assignmentBlocksNext = !existingAssignment;
   }
 
-    // Course finished — show the certificate instead of the usual lesson menu
+  // Course finished — show the certificate instead of the usual lesson menu
   if (certificateUrl) {
     await sendMessage(
       chatId,
@@ -612,7 +612,16 @@ async function markDone(chatId, lessonNumber) {
       {
         inline_keyboard: [
           [{ text: "🎓 View Certificate", url: certificateUrl }],
-          ...(lessonNumber > 1 ? [[{ text: "⬅ Previous Lesson", callback_data: `goto:${lessonNumber - 1}` }]] : []),
+          ...(lessonNumber > 1
+            ? [
+                [
+                  {
+                    text: "⬅ Previous Lesson",
+                    callback_data: `goto:${lessonNumber - 1}`,
+                  },
+                ],
+              ]
+            : []),
           [{ text: "📊 Progress", callback_data: "progress" }],
         ],
       },
@@ -736,7 +745,10 @@ async function removeInlineKeyboard(chatId, messageId) {
 async function sendSpecificLesson(chatId, lessonOrderNum, enrollmentId) {
   // Re-use sendLesson logic but for a specific lesson number
   // Update enrollment current_lesson to the requested number
-  const { enrollment, reason } = await getAuthorizedEnrollment(chatId, enrollmentId);
+  const { enrollment, reason } = await getAuthorizedEnrollment(
+    chatId,
+    enrollmentId,
+  );
 
   if (!enrollment) {
     await sendMessage(
@@ -831,7 +843,7 @@ async function sendSpecificLesson(chatId, lessonOrderNum, enrollmentId) {
     }
   }
 
-    // Module release schedule (drip). Free-preview lessons / free courses are never held back.
+  // Module release schedule (drip). Free-preview lessons / free courses are never held back.
   if (!lesson.is_free && enrollment.courses?.is_free_course !== true) {
     const lock = await getLessonLock(supabase, {
       course: enrollment.courses,
@@ -845,7 +857,12 @@ async function sendSpecificLesson(chatId, lessonOrderNum, enrollmentId) {
         lessonOrderNum > 1
           ? {
               inline_keyboard: [
-                [{ text: "⬅ Previous Lesson", callback_data: `goto:${lessonOrderNum - 1}` }],
+                [
+                  {
+                    text: "⬅ Previous Lesson",
+                    callback_data: `goto:${lessonOrderNum - 1}`,
+                  },
+                ],
               ],
             }
           : undefined,
@@ -875,7 +892,12 @@ async function sendSpecificLesson(chatId, lessonOrderNum, enrollmentId) {
 
   const keyboard = [
     [{ text: "▶ Open Lesson", url: lessonUrl }],
-    [{ text: "🔄 Get new link", callback_data: `relink:${enrollment.id}:${lesson.order_num}` }],
+    [
+      {
+        text: "🔄 Get new link",
+        callback_data: `relink:${enrollment.id}:${lesson.order_num}`,
+      },
+    ],
     [
       { text: "✅ Mark Done", callback_data: `done:${lesson.order_num}` },
       { text: "📊 Progress", callback_data: "progress" },
@@ -955,7 +977,7 @@ async function handleUpdate(update) {
         const enrollment = await getEnrollment(chatId);
         return markDone(chatId, enrollment?.current_lesson || 1);
       }
-            if (text === "/cancel") {
+      if (text === "/cancel") {
         if (await hasPendingRating(chatId)) {
           await cancelPendingRating(chatId);
           return sendMessage(chatId, "Rating cancelled\\.");
@@ -1031,7 +1053,7 @@ async function handleUpdate(update) {
         return markDone(chatId, Number(data.replace("done:", "")));
       if (data.startsWith("quiz:"))
         return sendQuiz(chatId, Number(data.replace("quiz:", "")));
-            if (data.startsWith("assign:"))
+      if (data.startsWith("assign:"))
         return beginAssignmentSubmit(
           chatId,
           Number(data.replace("assign:", "")),
@@ -1050,7 +1072,9 @@ async function handleUpdate(update) {
           .select("student_id")
           .eq("telegram_chat_id", String(chatId));
         const ids = [
-          ...new Set((rows.data || []).map((r) => r.student_id).filter(Boolean)),
+          ...new Set(
+            (rows.data || []).map((r) => r.student_id).filter(Boolean),
+          ),
         ];
         if (ids.length) {
           await supabase
@@ -1069,13 +1093,20 @@ async function handleUpdate(update) {
       if (data.startsWith("relink:")) {
         const [, enrollmentId, orderStr] = data.split(":");
         const orderNum = Number(orderStr);
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-          enrollmentId || "",
-        );
+        const isUuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            enrollmentId || "",
+          );
         if (!isUuid || !Number.isInteger(orderNum) || orderNum < 1) {
-          return sendMessage(chatId, "That button is no longer valid. Tap Start Lesson to continue.", {
-            inline_keyboard: [[{ text: "▶ Start Lesson", callback_data: "lesson" }]],
-          });
+          return sendMessage(
+            chatId,
+            "That button is no longer valid. Tap Start Lesson to continue.",
+            {
+              inline_keyboard: [
+                [{ text: "▶ Start Lesson", callback_data: "lesson" }],
+              ],
+            },
+          );
         }
         return sendSpecificLesson(chatId, orderNum, enrollmentId);
       }
@@ -1142,15 +1173,45 @@ async function sendLiveReminders() {
           ? "live_reminder_24h_sent_at"
           : "live_reminder_1h_sent_at";
 
+      // Claim this reminder first, so a slow run, the next tick or a second server can never send it twice.
+      const { data: claimed } = await supabase
+        .from("lessons")
+        .update({ [sentColumn]: new Date().toISOString() })
+        .eq("id", lesson.id)
+        .is(sentColumn, null)
+        .select("id");
+      if (!claimed || claimed.length === 0) continue;
+
       // Only students who have actually reached this exact lesson in the
       // sequence, and are paid, get considered at all.
-      const { data: enrollments } = await supabase
-        .from("enrollments")
-        .select("telegram_chat_id, phone, student_id")
-        .eq("course_uuid", lesson.course_id)
-        .eq("current_lesson", lesson.order_num)
-        .eq("payment_status", "paid")
-        .not("telegram_chat_id", "is", null);
+      // Paged: the database returns at most 1000 rows per request.
+      const enrollments = [];
+      let enrollmentsFailed = false;
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error: pageErr } = await supabase
+          .from("enrollments")
+          .select("telegram_chat_id, phone, student_id")
+          .eq("course_uuid", lesson.course_id)
+          .eq("current_lesson", lesson.order_num)
+          .eq("payment_status", "paid")
+          .not("telegram_chat_id", "is", null)
+          .order("id", { ascending: true })
+          .range(from, from + 999);
+        if (pageErr) {
+          enrollmentsFailed = true;
+          break;
+        }
+        enrollments.push(...(page || []));
+        if (!page || page.length < 1000) break;
+      }
+      if (enrollmentsFailed) {
+        // Give the claim back so the next tick retries this lesson.
+        await supabase
+          .from("lessons")
+          .update({ [sentColumn]: null })
+          .eq("id", lesson.id);
+        continue;
+      }
 
       if (!enrollments || enrollments.length === 0) {
         await supabase
@@ -1167,12 +1228,14 @@ async function sendLiveReminders() {
       const studentIds = [
         ...new Set(enrollments.map((e) => e.student_id).filter(Boolean)),
       ];
-      const { data: studentRows } = studentIds.length
-        ? await supabase
-            .from("students")
-            .select("id, reminder_channel")
-            .in("id", studentIds)
-        : { data: [] };
+      const studentRows = [];
+      for (let i = 0; i < studentIds.length; i += 100) {
+        const { data: part } = await supabase
+          .from("students")
+          .select("id, reminder_channel")
+          .in("id", studentIds.slice(i, i + 100));
+        studentRows.push(...(part || []));
+      }
       const channelById = new Map(
         (studentRows || []).map((s) => [s.id, s.reminder_channel]),
       );
@@ -1219,7 +1282,12 @@ async function sendLiveReminders() {
               disable_web_page_preview: false,
               reply_markup: {
                 inline_keyboard: [
-                  [{ text: "🔕 Mute live-class reminders", callback_data: "mute_live" }],
+                  [
+                    {
+                      text: "🔕 Mute live-class reminders",
+                      callback_data: "mute_live",
+                    },
+                  ],
                 ],
               },
             },
@@ -1342,7 +1410,11 @@ async function handleWorkshopStart(chatId, linkToken) {
   if (reg.payment_status === "confirmed") {
     return sendMessage(
       chatId,
-      buildWorkshopMessage("confirmation", w.title, formatWorkshopWhen(w.date_time)),
+      buildWorkshopMessage(
+        "confirmation",
+        w.title,
+        formatWorkshopWhen(w.date_time),
+      ),
       workshopJoinKeyboard(w.zoom_link),
     );
   }
@@ -1355,6 +1427,19 @@ async function handleWorkshopStart(chatId, linkToken) {
 
 // Called by course-web (lib/workshop-notify.ts) when a registration is confirmed.
 // Same internal-secret auth as /internal/send-live-recording.
+// Timing-safe check of the shared secret for every /internal route (the per-route checks below stay as a second lock).
+app.use("/internal", (req, res, next) => {
+  const given = Buffer.from(req.get("Authorization") || "");
+  const wanted = Buffer.from(`Bearer ${INTERNAL_BOT_SECRET}`);
+  const ok =
+    INTERNAL_BOT_SECRET &&
+    given.length === wanted.length &&
+    crypto.timingSafeEqual(given, wanted);
+  if (!ok) return res.status(401).json({ error: "Unauthorized" });
+  next();
+});
+
+
 app.post("/internal/send-workshop-message", async (req, res) => {
   const auth = req.get("Authorization") || "";
   if (!INTERNAL_BOT_SECRET || auth !== `Bearer ${INTERNAL_BOT_SECRET}`) {
@@ -1399,9 +1484,17 @@ app.post("/internal/send-inactivity-nudge", async (req, res) => {
   }
 
   const { enrollmentId, lessonNum } = req.body || {};
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRe.test(enrollmentId || "") || !Number.isInteger(lessonNum) || lessonNum < 1 || lessonNum > 9999) {
-    return res.status(400).json({ error: "Missing or invalid enrollmentId / lessonNum" });
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (
+    !uuidRe.test(enrollmentId || "") ||
+    !Number.isInteger(lessonNum) ||
+    lessonNum < 1 ||
+    lessonNum > 9999
+  ) {
+    return res
+      .status(400)
+      .json({ error: "Missing or invalid enrollmentId / lessonNum" });
   }
 
   try {
@@ -1412,7 +1505,9 @@ app.post("/internal/send-inactivity-nudge", async (req, res) => {
         .eq("id", enrollmentId),
     );
     if (!enrollment || !enrollment.telegram_chat_id || !enrollment.courses) {
-      return res.status(409).json({ error: "Enrollment not reachable on Telegram" });
+      return res
+        .status(409)
+        .json({ error: "Enrollment not reachable on Telegram" });
     }
     if (enrollment.payment_status !== "paid") {
       return res.status(409).json({ error: "Enrollment is not paid" });
@@ -1438,7 +1533,8 @@ app.post("/internal/send-inactivity-nudge", async (req, res) => {
         lesson,
         enrollment,
       });
-      if (lock.locked) return res.status(409).json({ error: "Lesson is still locked" });
+      if (lock.locked)
+        return res.status(409).json({ error: "Lesson is still locked" });
     }
 
     await sendMessage(
@@ -1476,7 +1572,8 @@ app.post("/internal/send-module-unlock", async (req, res) => {
   }
 
   const { enrollmentId, moduleId } = req.body || {};
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRe.test(enrollmentId || "") || !uuidRe.test(moduleId || "")) {
     return res.status(400).json({ error: "Missing or invalid ids" });
   }
@@ -1489,7 +1586,9 @@ app.post("/internal/send-module-unlock", async (req, res) => {
         .eq("id", enrollmentId),
     );
     if (!enrollment || !enrollment.telegram_chat_id || !enrollment.courses) {
-      return res.status(409).json({ error: "Enrollment not reachable on Telegram" });
+      return res
+        .status(409)
+        .json({ error: "Enrollment not reachable on Telegram" });
     }
     if (enrollment.payment_status !== "paid") {
       return res.status(409).json({ error: "Enrollment is not paid" });
@@ -1502,7 +1601,8 @@ app.post("/internal/send-module-unlock", async (req, res) => {
         .eq("id", moduleId)
         .eq("course_id", enrollment.course_uuid),
     );
-    if (!mod) return res.status(409).json({ error: "Module not in this course" });
+    if (!mod)
+      return res.status(409).json({ error: "Module not in this course" });
 
     const firstLesson = await firstRow(
       supabase
@@ -1513,7 +1613,8 @@ app.post("/internal/send-module-unlock", async (req, res) => {
         .eq("is_published", true)
         .order("order_num", { ascending: true }),
     );
-    if (!firstLesson) return res.status(409).json({ error: "Module has no published lessons" });
+    if (!firstLesson)
+      return res.status(409).json({ error: "Module has no published lessons" });
 
     // Never announce a module that is still locked for this student.
     const lock = await getLessonLock(supabase, {
@@ -1521,7 +1622,8 @@ app.post("/internal/send-module-unlock", async (req, res) => {
       lesson: firstLesson,
       enrollment,
     });
-    if (lock.locked) return res.status(409).json({ error: "Module is still locked" });
+    if (lock.locked)
+      return res.status(409).json({ error: "Module is still locked" });
 
     await sendMessage(
       enrollment.telegram_chat_id,
@@ -1579,7 +1681,10 @@ async function sendWorkshopTelegramReminders() {
         .lte("date_time", new Date(win.end).toISOString());
 
       if (error) {
-        console.error("[workshop-reminders] workshop query failed:", error.message);
+        console.error(
+          "[workshop-reminders] workshop query failed:",
+          error.message,
+        );
         continue;
       }
       if (!workshops || workshops.length === 0) continue;
@@ -1688,7 +1793,7 @@ app.post("/internal/send-live-recording", async (req, res) => {
 
 app.post("/webhook", async (req, res) => {
   const secretHeader = req.header("x-telegram-bot-api-secret-token");
-  if (WEBHOOK_SECRET && secretHeader !== WEBHOOK_SECRET) {
+  if (!WEBHOOK_SECRET || secretHeader !== WEBHOOK_SECRET) {
     res.sendStatus(401);
     return;
   }
@@ -1732,6 +1837,24 @@ app.get("/", (req, res) => {
     time: new Date().toISOString(),
   });
 });
+
+// Housekeeping: forget processed-message ids after 14 days so the table does not grow forever.
+async function pruneProcessedMessages() {
+  try {
+    const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { error } = await supabase
+      .from("webhook_processed_messages")
+      .delete()
+      .lt("created_at", cutoff);
+    if (error) console.error("[prune] webhook_processed_messages:", error.message);
+  } catch (err) {
+    console.error("[prune] failed:", err.message);
+  }
+}
+setInterval(pruneProcessedMessages, 24 * 60 * 60 * 1000);
+setTimeout(pruneProcessedMessages, 60 * 1000);
+
+
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`Telegram bot running on port ${PORT}`));
